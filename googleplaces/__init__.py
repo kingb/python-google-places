@@ -26,6 +26,13 @@ import lang
 import ranking
 import types
 
+# Forking googleplaces to use OpenMapQuest for geocoding. *sigh*
+try:
+    from geopy.geocoders import openmapquest
+except ImportError:
+    pass
+
+
 
 __all__ = ['GooglePlaces', 'GooglePlacesError', 'GooglePlacesAttributeError',
            'geocode_location']
@@ -74,7 +81,7 @@ def _fetch_remote_file(service_url, params={}, use_http_post=False):
     return (response.headers.get('content-type'),
             fn, response.read(), response.geturl())
 
-def geocode_location(location, sensor=False):
+def geocode_location(location, sensor=False, mapquest_api_key=None):
     """Converts a human-readable location to lat-lng.
 
     Returns a dict with lat and lng keys.
@@ -83,20 +90,36 @@ def geocode_location(location, sensor=False):
     location -- A human-readable location, e.g 'London, England'
     sensor   -- Boolean flag denoting if the location came from a device using
                 its' location sensor (default False)
+    mapquest_api_key -- If a mapquest api key is provided, the geopy api for
+                        the open mapquest api is used instead for geocoding.
 
     raises:
     GooglePlacesError -- if the geocoder fails to find a location.
     """
-
-    url, geo_response = _fetch_remote_json(
-            GooglePlaces.GEOCODE_API_URL,
-            {'address': location, 'sensor': str(sensor).lower()})
-    _validate_response(url, geo_response)
-    if geo_response['status'] == GooglePlaces.RESPONSE_STATUS_ZERO_RESULTS:
-        error_detail = ('Lat/Lng for location \'%s\' can\'t be determined.' %
-                        location)
-        raise GooglePlacesError, error_detail
-    return geo_response['results'][0]['geometry']['location']
+    if mapquest_api_key is not None:
+        mapquest = openmapquest.OpenMapQuest(api_key=mapquest_api_key)
+        results = mapquest.geocode(location, exactly_one=False)
+        
+        #Filter for places only for now
+        results = [ res for res in results if res[3] == 'place']
+        
+        if results:
+            # Take the first results
+            r = results[0]
+            # Return compitble formatted lat/lng coords.
+            return {u'lat': r[1][0], u'lng': r[1][1]}
+        else:
+            raise GooglePlacesError, "mapquest geocoding returned no results"
+    else:
+        url, geo_response = _fetch_remote_json(
+                GooglePlaces.GEOCODE_API_URL,
+                {'address': location, 'sensor': str(sensor).lower()})
+        _validate_response(url, geo_response)
+        if geo_response['status'] == GooglePlaces.RESPONSE_STATUS_ZERO_RESULTS:
+            error_detail = ('Lat/Lng for location \'%s\' can\'t be determined.' %
+                            location)
+            raise GooglePlacesError, error_detail
+        return geo_response['results'][0]['geometry']['location']
 
 def _get_place_details(reference, api_key, sensor=False):
     """Gets a detailed place response.
@@ -192,8 +215,9 @@ class GooglePlaces(object):
     RESPONSE_STATUS_OK = 'OK'
     RESPONSE_STATUS_ZERO_RESULTS = 'ZERO_RESULTS'
 
-    def __init__(self, api_key):
+    def __init__(self, api_key, mapquest_api_key=None):
         self._api_key = api_key
+        self._mapquest_api_key = mapquest_api_key
         self._sensor = False
         self._request_params = None
 
@@ -246,7 +270,7 @@ class GooglePlaces(object):
                                  'must be specified.')
         self._sensor = sensor
         self._lat_lng = (lat_lng if lat_lng is not None
-                         else geocode_location(location))
+                         else geocode_location(location, self._mapquest_api_key))
         radius = (radius if radius <= GooglePlaces.MAXIMUM_SEARCH_RADIUS
                   else GooglePlaces.MAXIMUM_SEARCH_RADIUS)
         lat_lng_str = '%(lat)s,%(lng)s' % self._lat_lng
