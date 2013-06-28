@@ -270,7 +270,7 @@ class GooglePlaces(object):
                                  'must be specified.')
         self._sensor = sensor
         self._lat_lng = (lat_lng if lat_lng is not None
-                         else geocode_location(location, self._mapquest_api_key))
+                         else geocode_location(location, mapquest_api_key=self._mapquest_api_key))
         radius = (radius if radius <= GooglePlaces.MAXIMUM_SEARCH_RADIUS
                   else GooglePlaces.MAXIMUM_SEARCH_RADIUS)
         lat_lng_str = '%(lat)s,%(lng)s' % self._lat_lng
