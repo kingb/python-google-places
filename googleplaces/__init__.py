@@ -178,6 +178,8 @@ class GooglePlaces(object):
                              'nearbysearch/json?')
     TEXT_SEARCH_API_URL = ('https://maps.googleapis.com/maps/api/place/' +
                              'textsearch/json?')
+    RADAR_SEARCH_API_URL = ('https://maps.googleapis.com/maps/api/place/' +
+                             'radarsearch/json?')
     DETAIL_API_URL = ('https://maps.googleapis.com/maps/api/place/details/' +
                       'json?')
     CHECKIN_API_URL = ('https://maps.googleapis.com/maps/api/place/check-in/' +
@@ -203,6 +205,62 @@ class GooglePlaces(object):
             warnings.warn('The query API is deprecated. Please use nearby_search.',
                           DeprecationWarning, stacklevel=2)
         return self.nearby_search(**kwargs)
+
+    def radar_search(self, language=lang.ENGLISH, keyword=None, location=None,
+               lat_lng=None, name=None, radius=3200, rankby=ranking.PROMINENCE,
+               sensor=False, types=[]):
+        """Perform a radar search using the Google Places API.
+        
+        One of either location or lat_lng are required, the rest of the keyword
+        arguments are optional.
+        
+        keyword arguments:
+        keyword  -- A term to be matched against all available fields, including
+                    but not limited to name, type, and address (default None)
+        location -- A human readable location, e.g 'London, England'
+                    (default None)
+        language -- The language code, indicating in which language the
+                    results should be returned, if possible. (default lang.ENGLISH)
+        lat_lng  -- A dict containing the following keys: lat, lng
+                    (default None)
+        name     -- A term to be matched against the names of the Places.
+                    Results will be restricted to those containing the passed
+                    name value. (default None)
+        radius   -- The radius (in meters) around the location/lat_lng to
+                    restrict the search to. The maximum is 50000 meters.
+                    (default 3200)
+        sensor   -- Indicates whether or not the Place request came from a
+                    device using a location sensor (default False).
+        types    -- An optional list of types, restricting the results to
+                    Places (default []).
+        """
+        if location is None and lat_lng is None:
+            raise ValueError('One of location or lat_lng must be passed in.')
+        
+        self._sensor = sensor
+        self._lat_lng = (lat_lng if lat_lng is not None
+                         else geocode_location(location))
+        radius = (radius if radius <= GooglePlaces.MAXIMUM_SEARCH_RADIUS
+                  else GooglePlaces.MAXIMUM_SEARCH_RADIUS)
+        lat_lng_str = '%(lat)s,%(lng)s' % self._lat_lng
+        self._request_params = {'location': lat_lng_str}
+        if len(types) > 0:
+            self._request_params['types'] = '|'.join(types)
+        if keyword is not None:
+            self._request_params['keyword'] = keyword
+        if name is not None:
+            self._request_params['name'] = name
+        if language is not None:
+            self._request_params['language'] = language
+        if radius is not None:
+            self._request_params['radius'] = radius
+        self._add_required_param_keys()
+        url, places_response = _fetch_remote_json(
+                GooglePlaces.RADAR_SEARCH_API_URL, self._request_params)
+        _validate_response(url, places_response)
+        return GooglePlacesSearchResult(self, places_response)
+        
+    
 
     def nearby_search(self, language=lang.ENGLISH, keyword=None, location=None,
                lat_lng=None, name=None, radius=3200, rankby=ranking.PROMINENCE,
@@ -468,16 +526,43 @@ class Place(object):
         self._query_instance = query_instance
         self._id = place_data['id']
         self._reference = place_data['reference']
-        self._name = place_data['name']
+        if 'name' in place_data:
+            self._name = place_data['name']
         self._vicinity = place_data.get('vicinity', '')
         self._geo_location = place_data['geometry']['location']
-        self._rating = place_data.get('rating')
-        self._types = place_data.get('types')
-        self._icon = place_data.get('icon')
+        if 'rating' in place_data:
+            self._rating = place_data.get('rating')
+        if 'types' in place_data:
+            self._types = place_data.get('types')
+        if 'icon' in place_data:
+            self._icon = place_data.get('icon')
         if place_data.get('address_components') is None:
             self._details = None
         else:
             self._details = place_data
+
+    def update_basic_details(self):
+        # Bail if there are not details to work with
+        if self._details is None:
+            return
+        
+        place_data = self._details
+        
+        if 'name' in place_data:
+            self._name = place_data['name']
+        self._vicinity = place_data.get('vicinity', '')
+        self._geo_location = place_data['geometry']['location']
+        if 'rating' in place_data:
+            self._rating = place_data.get('rating')
+        if 'types' in place_data:
+            self._types = place_data.get('types')
+        if 'icon' in place_data:
+            self._icon = place_data.get('icon')
+        if place_data.get('address_components') is None:
+            self._details = None
+        else:
+            self._details = place_data
+    
 
     @property
     def reference(self):
@@ -621,6 +706,8 @@ class Place(object):
             self._details = _get_place_details(
                     self.reference, self._query_instance.api_key,
                     self._query_instance.sensor)
+            # required when doing a radar search, otherwise redundent.
+            self.update_basic_details()
 
     @cached_property
     def photos(self):
