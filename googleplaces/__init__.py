@@ -101,13 +101,13 @@ def geocode_location(location, sensor=False, mapquest_api_key=None):
         results = mapquest.geocode(location, exactly_one=False)
         
         #Filter for places only for now
-        results = [ res for res in results if res[3] == 'place']
+        results = [ loc for loc in results if loc.raw['class'] == 'place']
         
         if results:
             # Take the first results
             r = results[0]
             # Return compitble formatted lat/lng coords.
-            return {u'lat': r[1][0], u'lng': r[1][1]}
+            return {u'lat': r.latitude, u'lng': r.longitude}
         else:
             raise GooglePlacesError, "mapquest geocoding returned no results"
     else:
